@@ -1,0 +1,44 @@
+name: build
+on:
+  push:
+    branches:
+      - workflow-test
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - run: git config --global core.autocrlf input
+      - uses: actions/checkout@v3
+      - uses: cygwin/cygwin-install-action@master
+        with:
+          platform: x86
+          install-dir: C:\cygwin32
+          add-to-path: false
+          packages: >-
+            binutils=2.39-1
+            gcc-core=11.3.0-1
+            make=4.3-1
+      - uses: cygwin/cygwin-install-action@master
+        with:
+          platform: x86_64
+          install-dir: C:\cygwin64
+          add-to-path: false
+          packages: >-
+            binutils=2.40-1
+            gcc-core=11.3.0-1
+            make=4.4.1-1
+      - run: |
+          export PATH=/bin:/usr/bin:$PATH
+          cd $(cygpath '${{ github.workspace }}')
+          make all
+        shell: C:\cygwin32\bin\bash.exe -o igncr '{0}'
+      - run: |
+          export PATH=/bin:/usr/bin:$PATH
+          cd $(cygpath '${{ github.workspace }}')
+          make all
+        shell: C:\cygwin64\bin\bash.exe -o igncr '{0}'
+      - run: dir
+      - uses: actions/upload-artifact@v3
+        with:
+          name: executables
+          path: cygwin-bridge*.exe
