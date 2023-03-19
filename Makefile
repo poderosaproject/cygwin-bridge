@@ -24,4 +24,4 @@ clean:
 	rm -f $(TARGET)
 
 $(TARGET): cygwin-bridge.c
-	gcc -Wall -std=c11 -O2 -s -mwindows -D_DEFAULT_SOURCE $(OPTS) -o $@ $^
+	gcc -Wall -std=c11 -O2 -s -mwindows -D_DEFAULT_SOURCE -D_GNU_SOURCE $(OPTS) -o $@ $^

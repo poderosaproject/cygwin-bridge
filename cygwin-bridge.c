@@ -30,8 +30,10 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <termios.h>
@@ -278,7 +280,7 @@ void child_proc(struct Options *opt) {
     TRACE_ERROR("execvp")
 }
 
-bool write_all(int fd, char *buff, size_t len) {
+bool write_all(int fd, uint8_t *buff, size_t len) {
     size_t wlen = 0;
     while (wlen < len) {
         size_t w = write(fd, &buff[wlen], len - wlen);
@@ -289,6 +291,116 @@ bool write_all(int fd, char *buff, size_t len) {
         wlen += w;
     }
     return wlen == len;
+}
+
+enum TelnetCode {
+    TELNET_SE = 240,
+    TELNET_NOP = 241,
+    TELNET_DATAMARK = 242,
+    TELNET_BREAK = 243,
+    TELNET_INTERRUPT = 244,
+    TELNET_ABORTOUTPUT = 245,
+    TELNET_AREYOUTHERE = 246,
+    TELNET_ERASECHAR = 247,
+    TELNET_ERASELINE = 248,
+    TELNET_GOAHEAD = 249,
+    TELNET_SB = 250,
+    TELNET_WILL = 251,
+    TELNET_WONT = 252,
+    TELNET_DO = 253,
+    TELNET_DONT = 254,
+    TELNET_IAC = 255,
+};
+
+void subnegotiation(int fd, uint8_t *buff, size_t len) {
+    if (len == 0) {
+        return;
+    }
+
+    if (buff[0] == 31 /*Negotiate About Window Size*/ && len >= 5) {
+        uint16_t cols = (buff[1] << 8) | buff[2];
+        uint16_t rows = (buff[3] << 8) | buff[4];
+        ioctl(fd, TIOCSWINSZ, &(struct winsize){
+            .ws_col = cols,
+            .ws_row = rows,
+        });
+        return;
+    }
+}
+
+bool write_to_terminal(int fd, uint8_t *buff, size_t len) {
+    // Decode TELNET-like data stream.
+    // - <IAC IAC> is converted to a single byte (255)
+    // - Most IAC commands are ignored, except for commands such as NAWS
+    // - Cases where an IAC command is split into two packets are not considered
+
+    uint8_t *span = buff;
+    size_t span_len = len;
+    for (ssize_t span_offset = 0; span_offset < span_len; span_offset++) {
+        if (span[span_offset] == TELNET_IAC) {
+            if (span_offset + 1 < span_len) {
+                switch (span[span_offset + 1]) {
+                    case TELNET_SE:
+                    case TELNET_NOP:
+                    case TELNET_DATAMARK:
+                    case TELNET_BREAK:
+                    case TELNET_INTERRUPT:
+                    case TELNET_ABORTOUTPUT:
+                    case TELNET_AREYOUTHERE:
+                    case TELNET_ERASECHAR:
+                    case TELNET_ERASELINE:
+                    case TELNET_GOAHEAD:
+                        // ignore
+                        memmove(&span[span_offset],
+                                &span[span_offset + 2],
+                                span_len - (span_offset + 2));
+                        span_len -= 2;
+                        span_offset--;
+                        break;
+                    case TELNET_WILL:
+                    case TELNET_WONT:
+                    case TELNET_DO:
+                    case TELNET_DONT:
+                        if (span_offset + 2 < span_len) {
+                            // ignore
+                            memmove(&span[span_offset],
+                                    &span[span_offset + 3],
+                                    span_len - (span_offset + 3));
+                            span_len -= 3;
+                            span_offset--;
+                        }
+                        break;
+                    case TELNET_SB:
+                        if (span_offset + 2 < span_len) {
+                            uint8_t *p = memmem(&span[span_offset + 2],
+                                                span_len - (span_offset + 2),
+                                                &(uint8_t[]){ TELNET_IAC, TELNET_SE },
+                                                2);
+                            if (p) {
+                                if (!write_all(fd, &span[0], span_offset)) {
+                                    return false;
+                                }
+                                subnegotiation(fd, &span[span_offset + 2], p - &span[span_offset + 2]);
+                                span_len = &span[span_len] - &p[2];
+                                span = &p[2];
+                                span_offset = -1;
+                            }
+                        }
+                        break;
+                    case TELNET_IAC:
+                        memmove(&span[span_offset], &span[span_offset + 1], span_len - (span_offset + 1));
+                        span_len--;
+                        break;
+                }
+            }
+        }
+    }
+
+    if (span_len > 0) {
+        return write_all(fd, span, span_len);
+    } else {
+        return true;
+    }
 }
 
 int main(int argc, const char **argv) {
@@ -376,7 +488,7 @@ int main(int argc, const char **argv) {
 
     // parent process
     const size_t buffSize = 1024 * 32;
-    char *buff = malloc(buffSize);
+    uint8_t *buff = malloc(buffSize);
     if (!buff) {
         TRACE_ERROR("main: malloc for buffer")
         return 2;
@@ -424,7 +536,8 @@ int main(int argc, const char **argv) {
                 TRACE("main: socket read error (or closed)\n")
                 break;
             }
-            if (!write_all(amaster, buff, rlen)) {
+            // decode inbound data as TELNET-like stream
+            if (!write_to_terminal(amaster, buff, rlen)) {
                 TRACE("main: tty write error\n")
                 break;
             }
