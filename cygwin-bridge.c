@@ -241,9 +241,7 @@ bool ensure_std_fds(void) {
 }
 
 void terminate_child(pid_t pid) {
-    kill(pid, SIGTERM);
-    int status;
-    waitpid(pid, &status, 0);
+    kill(-pid, SIGHUP);
 }
 
 void child_proc(struct Options *opt) {
