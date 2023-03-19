@@ -21,7 +21,13 @@ endif
 all: $(TARGET)
 
 clean:
-	rm -f $(TARGET)
+	rm -f versioninfo.res resource.h $(TARGET)
 
-$(TARGET): cygwin-bridge.c
+resource.h: getversion.sh
+	bash getversion.sh $(TARGET) > resource.h
+
+versioninfo.res: versioninfo.rc resource.h
+	windres -DUNICODE -D_UNICODE --output-format=coff $< $@
+
+$(TARGET): cygwin-bridge.c versioninfo.res
 	gcc -Wall -std=c11 -O2 -s -mwindows -D_DEFAULT_SOURCE -D_GNU_SOURCE $(OPTS) -o $@ $^
