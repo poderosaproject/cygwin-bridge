@@ -30,12 +30,12 @@ jobs:
       - run: |
           export PATH=/bin:/usr/bin:$PATH
           cd $(cygpath '${{ github.workspace }}')
-          make all
+          make clean all
         shell: C:\cygwin32\bin\bash.exe -o igncr '{0}'
       - run: |
           export PATH=/bin:/usr/bin:$PATH
           cd $(cygpath '${{ github.workspace }}')
-          make all
+          make clean all
         shell: C:\cygwin64\bin\bash.exe -o igncr '{0}'
       - run: dir
       - uses: actions/upload-artifact@v3
